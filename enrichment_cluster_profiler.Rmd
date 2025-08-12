@@ -1,0 +1,146 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+more info here:https://learn.gencore.bio.nyu.edu/rna-seq-analysis/gene-set-enrichment-analysis/
+
+
+
+Important packages are:
+1. BiomaRt: allows us to convert from gene symbols, which may change in the literature, to more unique ensembl ids, which are more static across time and link to GO terms.
+2. org.Mm.eg.db is a database with that links gene ids with GO terms
+3. clusterProfiler: convenience functions so we don't have to code the analyses ourselves.
+```{r results="hide"}
+library(biomaRt)
+library(org.Mm.eg.db)
+keytypes(org.Mm.eg.db)
+library(clusterProfiler)
+library(enrichplot)
+library(mitch)
+```
+
+```{r}
+keytypes(org.Mm.eg.db)
+```
+
+```{r}
+res_tableOE <- read.csv("/workspaces/enrichment_class/AMvsEM_deseq2_results.csv", row.names = 1)
+
+# check duplicated rownames. Make sure there are none, if so, dealw ith them
+sum(duplicated(rownames(res_tableOE)))
+
+# Can fidn out which biomart to use for gene id mapping
+listEnsembl()
+
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+searchDatasets(mart = ensembl, pattern = "mus")
+ensembl <- useDataset(dataset = "mmusculus_gene_ensembl", mart = ensembl)
+# consider specifying a particular version for reproducibility
+listEnsemblArchives()
+```
+
+Can't tell you all the reasons why, but if you see methods with org.Mm.eg.db take note of which genes don't map. The method is much easier, but often not all genes will map, and it could be that they are old names, or not protein-coding-genesnot spelled correctly, and other reasons. If you do use that method convert form "ALIAS" rather than SYMBOL. You will have better results that way.
+
+Part of the problem is gene name change. If you were to use an older version of ensembl here you would notice greater mapping. However, since the org.Mm.eg.db cannot easily be downgraded, and since we want the most recent GO terms which are available, we may have to resign ourselves to not having all genes map. Your gene list may actually quite old. Your data were originally mapped with an annotation from 2011.
+```{r ensembl}
+ensembl_114 <- useEnsembl(biomart = 'genes', 
+                          dataset = 'mmusculus_gene_ensembl',
+                          version = 114)
+# Many names in your gene list are of different types or are synonyms
+# Therefore, we must search and combine the results. 
+# Doing this procedure brings us from 10% no-maps to 5% no-maps
+# Search across different identifier types
+results <- list()
+
+synonyms <- getBM(
+  attributes = c("external_gene_name", "ensembl_gene_id", "external_synonym", "mgi_symbol"),
+  filters = "external_synonym",
+  values = rownames(res_tableOE),
+  mart = ensembl_114
+)
+
+name <- getBM(
+  attributes = c("external_gene_name", "ensembl_gene_id", "external_synonym", "mgi_symbol"),
+  filters = "external_gene_name",
+  values = rownames(res_tableOE),
+  mart = ensembl_114
+)
+
+mgi <- getBM(
+  attributes = c("external_gene_name", "ensembl_gene_id", "external_synonym", "mgi_symbol"),
+  filters = "mgi_symbol",
+  values = rownames(res_tableOE),
+  mart = ensembl_114
+)
+
+# Combine results
+results <- merge(mgi, name, all = TRUE)
+results <- merge(results, synonyms, all = TRUE)
+
+#setdiff(rownames(res_tableOE), results$external_gene_name)
+
+```
+
+The gene names can map to more than one Ensembl ID (some genes change ID over time),
+so we need to remove duplicate IDs prior to assessing enriched GO terms
+In other words, the gene names we are converting from are less precise than the ones we are converting to.
+Therefore, we cannot know which Ensembl gene ID is the correct one. So just pick one
+
+```{r duplicates}
+
+non_duplicates <- which(duplicated(results$ensembl_gene_id) == FALSE)
+
+results <- results[non_duplicates, ]
+
+## Merge the Ensembl IDs with the results    
+merged_gene_ids <- merge(x=res_tableOE, y=results, by.x="row.names", by.y="external_gene_name")            
+
+## Extract significant results
+sigOE <- subset(merged_gene_ids, padj < 0.05)
+
+sigOE_genes <- as.character(sigOE$ensembl_gene_id)
+
+## Create background dataset for hypergeometric testing using all genes tested for significance in the results                
+allOE_genes <- as.character(merged_gene_ids$ensembl_gene_id)
+```
+
+Here, we begin the actual overrepresentation analysis.
+Notice there is a q-value cutoff. Remember, in OR we 
+```{r overrepresentation}
+# Overrepresentation analysis
+ego <- enrichGO(gene = sigOE_genes,
+                universe = allOE_genes,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db,
+                ont = "BP",
+                pAdjustMethod = "BH",
+                qvalueCutoff = 0.05,
+                readable = TRUE)
+
+## Dotplot gives top 50 genes by gene ratio (# genes related to GO term / total number of sig genes), not padj.
+pdf("/app/Downloads/dotplot.pdf")
+dotplot(ego, showCategory=50)
+dev.off()
+
+
+```
+
+Next, we can make different plots using this enrichment. Finally, we
+can also perform GSEA
+
+```{r mitch}
+# Download gene sets
+# We'll download these from GSEA MSigDB https://www.gsea-msigdb.org/gsea/msigdb/mouse/collections.jsp
+# Select gene symbol canonical pathways. Perhaps double check if that makes sense with Alyssa
+download.file("https://reactome.org/download/current/ReactomePathways.gmt.zip", destfile="ReactomePathways.gmt.zip")
+unzip("ReactomePathways.gmt.zip")
+#genesets <- gmt_import("ReactomePathways.gmt")
+genesets <- gmt_import("/app/Downloads/m2.cp.v2025.1.Mm.symbols.gmt.txt")
+
+x <- list("dge1"=merged_gene_ids)
+y <- mitch_import(x, DEtype="DESeq2", geneIDcol="Row.names")
+res <- mitch_calc(y, genesets, priority="significance", minsetsize=5)
+
+## NB TRY OTHER TECHNIQUES IN THE EXAMPLEFILE FIRST
+```
