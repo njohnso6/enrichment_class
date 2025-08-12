@@ -1,3 +1,4 @@
+{
 	"name": "R Data Science Environment",
 	"build": {
 		"dockerfile": "Dockerfile",
