@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Functional Enrichment Class"
 output: html_notebook
 ---
 more info here:https://learn.gencore.bio.nyu.edu/rna-seq-analysis/gene-set-enrichment-analysis/
@@ -61,6 +61,11 @@ results <- list()
 In order to check what we can search for we can use listAttributes()
 ```{r listAttributes}
 listAttributes(ensembl_114)
+grep("gene", listAttributes(ensembl_114)$name)
+listAttributes(ensembl_114)[13,]
+
+# A function is also provided 
+searchAttributes(mart = ensembl_114, pattern = "symbol")
 ```
 
 Because many of these genes have gone by other names it's important to check each entry
@@ -200,17 +205,38 @@ dotplot(ego_down, showCategory=15)
 # Feel free to explore the ego object and make custom plots using it
 
 ```
-Can we conclude anything from these results?
+Can we conclude anything from these results? Should we try some more?
+Let's do this one more time with more specific terms. In the future, you can use 
+the orgdb version to make this easier
+```{r molecular_only}
+go_terms_2_search <- go_terms[go_terms[,"namespace_1003"] == "molecular_function",]
+term2gene_ml <- go_terms_2_search[,c("go_id", "ensembl_gene_id")]
+# This object maps the GO terms to their names.
+# GO:0006414 stands for "translational elongation"
+term2name_ml <- unique(go_terms_2_search[,c("go_id", "name_1006")])
+ego_down_ml <- enricher(gene = downOE_genes,
+                universe = allOE_genes, # if left blank will be all known genes
+                qvalueCutoff = 0.05, # pvalue = single test, q-value accounts for all tests
+                pAdjustMethod = "BH",
+                TERM2GENE = term2gene_ml,
+                TERM2NAME = term2name_ml)
+```
 
-
+```{r ml_down_dotplot}
+dotplot(ego_down_ml, showCategory=10)
+```
 ## More plots
 These are only the top 15 categories. Without necessarily needing to build our own plots
-We may want to fiddle around to make things look nicer
+We may want to fiddle around to make things look nicer.
+
 Another option is to change font.size or label_format.
 You may also want to fiddle with color, which can be set to p.adjust, pvalue, or qvalue;
 the x-axis, which can also be set to "Count"; size, which helps to scale everything to help it fit, and x, which is the variable for the x-axis. Can be either 'GeneRatio' or 'Count'
 ```{r test_different_vis}
-
+# Alternatively for more categories
+pdf("dotplot_down.pdf")
+dotplot(ego_down, showCategories=30)
+dev.off()
 ```
 
 Let's look more at the downregulated results
@@ -218,31 +244,58 @@ Let's look more at the downregulated results
 # Gene ratio = num of our genes in category / # of our genes
 # Bg ratio = num of all genes in that category / # of all background genes
 # p adj = p value adjusted to control the family-wise error rate (FWER), which is the probability of making at least one false rejection using Benjamini-Hochberg or other selected stat
-# a q-value is designed to control the false discovery rate. An FDR of 0.05 means that 5% of the results declared significant are expected to be false positives
+# a q-value is designed to control the false discovery rate. An FDR of 0.05 means that 5% of the results declared significant are expected to be false positives.
+# Remember, these tests are testing whether the difference between the gene ratio and the background ratio
+# is significant
 head(ego_down@result)
 ```
 
+Helps us see some of the overlap of gene categories
 ```{r heatmap}
 edox <- setReadable(ego_down, 'org.Mm.eg.db', 'ENSEMBL')
-heatplot(edox, showCategory=5)
-``
+pdf("heatplot.pdf")
+heatplot(edox, showCategory=5, label_format=1)
+dev.off()
+```
 
 
 Next, we can make different plots using this enrichment. Finally, we
 can also perform GSEA
+```{r GSEA}
+# This time we will use all genes!
+# First remove any NAs
+sigOE_gsea <- dplyr::filter(sigOE, ensembl_gene_id != "NA")
+sigOE_gsea <- sigOE_gsea[which(duplicated(sigOE_gsea$ensembl_gene_id) == F), ]
 
-```{r mitch}
-# Download gene sets
-# We'll download these from GSEA MSigDB https://www.gsea-msigdb.org/gsea/msigdb/mouse/collections.jsp
-# Select gene symbol canonical pathways. Perhaps double check if that makes sense with Alyssa
-download.file("https://reactome.org/download/current/ReactomePathways.gmt.zip", destfile="ReactomePathways.gmt.zip")
-unzip("ReactomePathways.gmt.zip")
-#genesets <- gmt_import("ReactomePathways.gmt")
-genesets <- gmt_import("/app/Downloads/m2.cp.v2025.1.Mm.symbols.gmt.txt")
+# Many people will choose to sort by either the FC or the significance. Why don't we do both?
+## Extract the foldchanges
+metrics <- sigOE_gsea$log2FoldChange * -log10(sigOE_gsea$padj + 0.000000000001)
+## Name the metrics change with the corresponding ensembl ID
+names(metrics) <- sigOE_gsea$ensembl_gene_id
+```
 
-x <- list("dge1"=merged_gene_ids)
-y <- mitch_import(x, DEtype="DESeq2", geneIDcol="Row.names")
-res <- mitch_calc(y, genesets, priority="significance", minsetsize=5)
+Next we need to order the combined relevance metrics in decreasing order. To do this we'll use the sort() function, which takes a vector as input.
+```{r}
+metrics <- sort(metrics, decreasing = TRUE)
+head(metrics)
+```
+```{r GSEA_actual}
+gsea <-  GSEA(gene = metrics,
+                pvalueCutoff = 0.05,
+                minGSSize = 10, # minimum gene set size (# genes in set) - change to test more sets or recover sets with fewer # genes
+                pAdjustMethod = "BH",
+                TERM2GENE = term2gene,
+                TERM2NAME = term2name)
 
-## NB TRY OTHER TECHNIQUES IN THE EXAMPLEFILE FIRST
+View(gsea@result)
+```
+Before continuing, it is important to note that because of the random shuffling involved in 
+the p-value generation, you won't get the same answers each time you run it under the same conditions unless you set a seed. 
+```{r GSEA_visual}
+gseaplot(gsea, geneSetID = 'GO:0000775')
+```
+
+The above was done with all GO terms. Try How would you use just BP (biological process terms?)
+```{r GSEA_practice}
+
 ```
