@@ -16,7 +16,7 @@ RUN apt-get update \
 RUN R -e 'install.packages(c("kableExtra","vioplot","gplots","eulerr","tweenr","bit"))'
 
 # Install required Bioconductor package
-RUN R -e 'BiocManager::install(c("getDEE2","DESeq2","fgsea","clusterProfiler","mitch","biomaRt","org.Mm.eg.db","enrichplot"))'
+RUN R -e 'BiocManager::install(c("getDEE2","DESeq2","fgsea","clusterProfiler","mitch","biomaRt","org.Mm.eg.db","enrichplot", "SPIA"))'
 
 # Clone the repository that contains the research code and execute it
 RUN git clone https://github.com/markziemann/enrichment_recipe.git
