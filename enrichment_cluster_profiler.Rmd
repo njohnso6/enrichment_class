@@ -235,7 +235,7 @@ the x-axis, which can also be set to "Count"; size, which helps to scale everyth
 ```{r test_different_vis}
 # Alternatively for more categories
 pdf("dotplot_down.pdf")
-dotplot(ego_down, showCategories=30)
+dotplot(ego_down, showCategory=30)
 dev.off()
 ```
 
@@ -250,6 +250,32 @@ Let's look more at the downregulated results
 head(ego_down@result)
 ```
 
+```{r other_plots}
+## To color genes by log2 fold changes, we need to extract the log2 fold changes from our results table creating a named vector
+upOE <- sigOE %>%
+  filter(log2FoldChange > fc_threshold)
+upOE_foldchanges <- upOE$log2FoldChange
+
+names(upOE_foldchanges) <- upOE$ensembl_gene_id
+
+## Cnetplot details the genes associated with one or more terms - by default gives the top 5 significant terms (by padj)
+cnetplot(ego_up, 
+         categorySize="pvalue", 
+         showCategory = 5, 
+         foldChange=upOE_foldchanges, 
+         vertex.label.font=6)
+
+## If some of the high fold changes are getting drowned out due to a large range, you could set a maximum fold change value
+upOE_foldchanges <- ifelse(upOE_foldchanges > 2, 2, upOE_foldchanges)
+upOE_foldchanges <- ifelse(upOE_foldchanges < -2, -2, upOE_foldchanges)
+
+cnetplot(ego_up, 
+         categorySize="pvalue", 
+         showCategory = 5, 
+         foldChange=upOE_foldchanges, 
+         vertex.label.font=6)
+```
+
 Helps us see some of the overlap of gene categories
 ```{r heatmap}
 edox <- setReadable(ego_down, 'org.Mm.eg.db', 'ENSEMBL')
@@ -259,8 +285,7 @@ dev.off()
 ```
 
 
-Next, we can make different plots using this enrichment. Finally, we
-can also perform GSEA
+Finally, we can also perform GSEA
 ```{r GSEA}
 # This time we will use all genes!
 # First remove any NAs
