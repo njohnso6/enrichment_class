@@ -4,29 +4,31 @@ output: html_notebook
 ---
 more info here:https://learn.gencore.bio.nyu.edu/rna-seq-analysis/gene-set-enrichment-analysis/
 
-
-
 Important packages are:
 1. BiomaRt: allows us to convert from gene symbols, which may change in the literature, to more unique ensembl ids, which are more static across time and link to GO terms.
 2. org.Mm.eg.db is a database with that links gene ids with GO terms
 3. clusterProfiler: convenience functions so we don't have to code the analyses ourselves.
-```{r results="hide"}
+```{r, results="hide", message=FALSE}
 library(biomaRt)
 library(org.Mm.eg.db)
-keytypes(org.Mm.eg.db)
 library(clusterProfiler)
 library(enrichplot)
 library(mitch)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(DOSE)
 ```
 
+The first step of this analysis is to convert our gene id names, which are fickle, to something more stable and unique. We will also need to map these to GO terms. OrgDbs provide a simple way to do the second part.
 ```{r}
 keytypes(org.Mm.eg.db)
 ```
-
+## Data Preparation
 ```{r}
 res_tableOE <- read.csv("/workspaces/enrichment_class/AMvsEM_deseq2_results.csv", row.names = 1)
 
-# check duplicated rownames. Make sure there are none, if so, dealw ith them
+# check duplicated rownames. Make sure there are none, if so, deal with them
 sum(duplicated(rownames(res_tableOE)))
 
 # Can fidn out which biomart to use for gene id mapping
@@ -40,9 +42,11 @@ ensembl <- useDataset(dataset = "mmusculus_gene_ensembl", mart = ensembl)
 listEnsemblArchives()
 ```
 
-Can't tell you all the reasons why, but if you see methods with org.Mm.eg.db take note of which genes don't map. The method is much easier, but often not all genes will map, and it could be that they are old names, or not protein-coding-genesnot spelled correctly, and other reasons. If you do use that method convert form "ALIAS" rather than SYMBOL. You will have better results that way.
+Can't tell you all the reasons why, but if you see methods with org.Mm.eg.db take note of which genes don't map. The method is much easier, but often not all genes will map, and it could be that they are old names, or not protein-coding-genesnot spelled correctly, and other reasons. If you do use that method convert from "ALIAS" rather than SYMBOL. You will have better results that way.
 
 Part of the problem is gene name change. If you were to use an older version of ensembl here you would notice greater mapping. However, since the org.Mm.eg.db cannot easily be downgraded, and since we want the most recent GO terms which are available, we may have to resign ourselves to not having all genes map. Your gene list may actually quite old. Your data were originally mapped with an annotation from 2011.
+
+In any case, orgDbs and BiomaRt are updated in different ways and separately. It's best to choose one method or the other when doing analysis rather than mixing them so any term mismatches won't affect the analysis. Here, we will use biomaRt.
 ```{r ensembl}
 ensembl_114 <- useEnsembl(biomart = 'genes', 
                           dataset = 'mmusculus_gene_ensembl',
@@ -52,7 +56,16 @@ ensembl_114 <- useEnsembl(biomart = 'genes',
 # Doing this procedure brings us from 10% no-maps to 5% no-maps
 # Search across different identifier types
 results <- list()
+```
 
+In order to check what we can search for we can use listAttributes()
+```{r listAttributes}
+listAttributes(ensembl_114)
+```
+
+Because many of these genes have gone by other names it's important to check each entry
+they could be under and then combine them.
+```{r get_biomarts}
 synonyms <- getBM(
   attributes = c("external_gene_name", "ensembl_gene_id", "external_synonym", "mgi_symbol"),
   filters = "external_synonym",
@@ -78,6 +91,11 @@ mgi <- getBM(
 results <- merge(mgi, name, all = TRUE)
 results <- merge(results, synonyms, all = TRUE)
 
+# Here, we extract all of the GO terms from the biomart
+# The namespace_1003 contains the GO subtype like biological process or cellular process
+# The name_1006 contains the actual name of the term.
+go_terms <- getBM(attributes = c("go_id", "ensembl_gene_id", "name_1006", "namespace_1003"),
+                  mart = ensembl_114)
 #setdiff(rownames(res_tableOE), results$external_gene_name)
 
 ```
@@ -95,36 +113,120 @@ results <- results[non_duplicates, ]
 
 ## Merge the Ensembl IDs with the results    
 merged_gene_ids <- merge(x=res_tableOE, y=results, by.x="row.names", by.y="external_gene_name")            
+```
 
+Remember, Overrepresentation analysis requires us to decide first which genes are significant.
+```{r extract_results}
+fc_threshold <- 1  # log2 fold change threshold (2-fold change)
 ## Extract significant results
 sigOE <- subset(merged_gene_ids, padj < 0.05)
-
+# Extract genes
 sigOE_genes <- as.character(sigOE$ensembl_gene_id)
+
+# upregulated genes
+upOE_genes <- sigOE %>%
+  filter(log2FoldChange > fc_threshold) %>%
+  pull(ensembl_gene_id)
+# downregulated genes
+downOE_genes <- sigOE %>%
+  filter(log2FoldChange < -fc_threshold) %>%
+  pull(ensembl_gene_id)
 
 ## Create background dataset for hypergeometric testing using all genes tested for significance in the results                
 allOE_genes <- as.character(merged_gene_ids$ensembl_gene_id)
 ```
 
+## Data Analysis
 Here, we begin the actual overrepresentation analysis.
-Notice there is a q-value cutoff. Remember, in OR we 
 ```{r overrepresentation}
 # Overrepresentation analysis
-ego <- enrichGO(gene = sigOE_genes,
-                universe = allOE_genes,
-                keyType = "ENSEMBL",
-                OrgDb = org.Mm.eg.db,
-                ont = "BP",
+
+# Just to show, this is what it would look like if we used the orgDB. You can see
+# if we simply load the orgdb library we can make it much easier on ourselves and
+# we don't have to extract the GO terms ourselves. Not only that, but we can easily
+# select which GO ontology to use. Still, orgdb is static, not update
+# as frequently. In case you need to take the more complex route, we show it here.
+# ego <- enrichGO(gene = sigOE_genes,
+#                universe = allOE_genes,
+#                keyType = "ENSEMBL",
+#                OrgDb = org.Mm.eg.db,
+#                ont = "BP",
+#                pAdjustMethod = "BH",
+#                qvalueCutoff = 0.05,
+#                readable = TRUE)
+
+# Here we make an object to map gene ids to go terms. Go terms contain names like
+# GO:0006414 
+term2gene <- go_terms[,c("go_id", "ensembl_gene_id")]
+# This object maps the GO terms to their names.
+# GO:0006414 stands for "translational elongation"
+term2name <- unique(go_terms[,c("go_id", "name_1006")])
+
+# Notice the qvalue cutoff. This accounts for all the different tests that may be run
+# and applies multiple testing correction considering the number of tests. 
+ego <- enricher(gene = sigOE_genes,
+                universe = allOE_genes, # if left blank will be all known genes
+                qvalueCutoff = 0.05, # pvalue = single test, q-value accounts for all tests
                 pAdjustMethod = "BH",
-                qvalueCutoff = 0.05,
-                readable = TRUE)
+                TERM2GENE = term2gene,
+                TERM2NAME = term2name)
 
-## Dotplot gives top 50 genes by gene ratio (# genes related to GO term / total number of sig genes), not padj.
-pdf("/app/Downloads/dotplot.pdf")
-dotplot(ego, showCategory=50)
-dev.off()
+## Dotplot gives top 15 genes by gene ratio (# genes related to GO term / total number of sig genes), not padj.
+dotplot(ego, showCategory=15)
+```
 
+That shows is for all genes, but it makes more sense to look at up and down-regulated genes
+separately
+```{r up}
+ego_up <- enricher(gene = upOE_genes,
+                universe = allOE_genes, # if left blank will be all known genes
+                qvalueCutoff = 0.05, # pvalue = single test, q-value accounts for all tests
+                pAdjustMethod = "BH",
+                TERM2GENE = term2gene,
+                TERM2NAME = term2name)
+
+dotplot(ego_up, showCategory=15)
+```
+
+```{r down}
+ego_down <- enricher(gene = downOE_genes,
+                universe = allOE_genes, # if left blank will be all known genes
+                qvalueCutoff = 0.05, # pvalue = single test, q-value accounts for all tests
+                pAdjustMethod = "BH",
+                TERM2GENE = term2gene,
+                TERM2NAME = term2name)
+
+dotplot(ego_down, showCategory=15)
+# Feel free to explore the ego object and make custom plots using it
 
 ```
+Can we conclude anything from these results?
+
+
+## More plots
+These are only the top 15 categories. Without necessarily needing to build our own plots
+We may want to fiddle around to make things look nicer
+Another option is to change font.size or label_format.
+You may also want to fiddle with color, which can be set to p.adjust, pvalue, or qvalue;
+the x-axis, which can also be set to "Count"; size, which helps to scale everything to help it fit, and x, which is the variable for the x-axis. Can be either 'GeneRatio' or 'Count'
+```{r test_different_vis}
+
+```
+
+Let's look more at the downregulated results
+```{r results_inspection}
+# Gene ratio = num of our genes in category / # of our genes
+# Bg ratio = num of all genes in that category / # of all background genes
+# p adj = p value adjusted to control the family-wise error rate (FWER), which is the probability of making at least one false rejection using Benjamini-Hochberg or other selected stat
+# a q-value is designed to control the false discovery rate. An FDR of 0.05 means that 5% of the results declared significant are expected to be false positives
+head(ego_down@result)
+```
+
+```{r heatmap}
+edox <- setReadable(ego_down, 'org.Mm.eg.db', 'ENSEMBL')
+heatplot(edox, showCategory=5)
+``
+
 
 Next, we can make different plots using this enrichment. Finally, we
 can also perform GSEA
