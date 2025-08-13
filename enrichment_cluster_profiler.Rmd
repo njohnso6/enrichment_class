@@ -48,6 +48,19 @@ keytypes(org.Mm.eg.db)
 
 ```{r}
 res_tableOE <- read.csv("/workspaces/enrichment_class/AMvsEM_deseq2_results.csv", row.names = 1)
+```
+
+Let's just orient ourselves to what is in this dataset
+```{r view}
+View(res_tableOE)
+```
+
+
+Here we are going to set up a biomaRt. What is the purpose of that?
+See all those "gene names" in your table? Those aren't reliable, and may not even be one-to-one with "canonical" genes. People come up with names all the time, so 
+in databases better cataloguing systems have been created. Among the most famous
+are ensembl IDs, entrez IDs. We will convert the "symbols" to ensembl IDs using a biomart. Why? Because GO terms and 
+```{r initial}
 
 # check duplicated rownames. Make sure there are none, if so, deal with them
 sum(duplicated(rownames(res_tableOE)))
@@ -196,20 +209,6 @@ Here, we begin the actual overrepresentation analysis.
 ```{r overrepresentation}
 # Overrepresentation analysis
 
-# Just to show, this is what it would look like if we used the orgDB. You can see
-# if we simply load the orgdb library we can make it much easier on ourselves and
-# we don't have to extract the GO terms ourselves. Not only that, but we can easily
-# select which GO ontology to use. Still, orgdb is static, not update
-# as frequently. In case you need to take the more complex route, we show it here.
-# ego <- enrichGO(gene = sigOE_genes,
-#                universe = allOE_genes,
-#                keyType = "ENSEMBL",
-#                OrgDb = org.Mm.eg.db,
-#                ont = "BP",
-#                pAdjustMethod = "BH",
-#                qvalueCutoff = 0.05,
-#                readable = TRUE)
-
 # Here we make an object to map gene ids to go terms. Go terms contain names like
 # GO:0006414 
 term2gene <- go_terms[,c("go_id", "ensembl_gene_id")]
@@ -283,7 +282,7 @@ dotplot(ego_down_ml, showCategory=10)
 Just to show you the easier way, here we use the orgdb. 
 You just have to select which ontology you want to use.
 Below you can see how to select the Molecular Function ontology.
-```{r easy}
+```{r easyone}
 ego_mf <- enrichGO(gene = sigOE_genes,
                 universe = allOE_genes,
                 keyType = "ENSEMBL",
@@ -297,7 +296,7 @@ ego_mf <- enrichGO(gene = sigOE_genes,
 
 Now, can you make a dotplot of the cellular component on your own.
 I'll let you inspect the helpfile yourself and make your plot.
-```{r easy}
+```{r easytwo}
 ego_mf <- enrichGO(gene = sigOE_genes,
                 universe = allOE_genes,
                 keyType = "ENSEMBL",
@@ -337,7 +336,7 @@ Let's look more at the downregulated results
 # a q-value is designed to control the false discovery rate. An FDR of 0.05 means that 5% of the results declared significant are expected to be false positives.
 # Remember, these tests are testing whether the difference between the gene ratio and the background ratio
 # is significant
-head(ego_down@result)
+View(head(ego_down@result))
 ```
 
 ```{r other_plots}
@@ -415,8 +414,9 @@ shuffling involved in the p-value generation, you won't get the same
 answers each time you run it under the same conditions unless you set a
 seed.
 
+Go ahead and choose a term to investigate
 ```{r GSEA_visual}
-gseaplot(gsea, geneSetID = 'GO:0000775')
+gseaplot(gsea, geneSetID = '')
 ```
 
 The above was done with all GO terms. Try How would you use just BP
@@ -424,4 +424,13 @@ The above was done with all GO terms. Try How would you use just BP
 
 ```{r GSEA_practice}
 
+```
+
+Let's take some of this info and use online tools. 
+Go to more on the right and select "go to working directory"
+Then do the bottom
+```{r output}
+downOE <- sigOE %>%
+  filter(log2FoldChange < -fc_threshold)
+write.csv(downOE, "down_OE.csv", quote=FALSE, row.names =FALSE)
 ```
