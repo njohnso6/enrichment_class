@@ -51,15 +51,18 @@ res_tableOE <- read.csv("/workspaces/enrichment_class/AMvsEM_deseq2_results.csv"
 ```
 
 Let's just orient ourselves to what is in this dataset
+
 ```{r view}
 View(res_tableOE)
 ```
 
+Here we are going to set up a biomaRt. What is the purpose of that? See
+all those "gene names" in your table? Those aren't reliable, and may not
+even be one-to-one with "canonical" genes. People come up with names all
+the time, so in databases better cataloguing systems have been created.
+Among the most famous are ensembl IDs, entrez IDs. We will convert the
+"symbols" to ensembl IDs using a biomart. Why? Because GO terms and
 
-Here we are going to set up a biomaRt. What is the purpose of that?
-See all those "gene names" in your table? Those aren't reliable, and may not even be one-to-one with "canonical" genes. People come up with names all the time, so 
-in databases better cataloguing systems have been created. Among the most famous
-are ensembl IDs, entrez IDs. We will convert the "symbols" to ensembl IDs using a biomart. Why? Because GO terms and 
 ```{r initial}
 
 # check duplicated rownames. Make sure there are none, if so, deal with them
@@ -279,9 +282,10 @@ ego_down_ml <- enricher(gene = downOE_genes,
 dotplot(ego_down_ml, showCategory=10)
 ```
 
-Just to show you the easier way, here we use the orgdb. 
-You just have to select which ontology you want to use.
-Below you can see how to select the Molecular Function ontology.
+Just to show you the easier way, here we use the orgdb. You just have to
+select which ontology you want to use. Below you can see how to select
+the Molecular Function ontology.
+
 ```{r easyone}
 ego_mf <- enrichGO(gene = sigOE_genes,
                 universe = allOE_genes,
@@ -294,14 +298,15 @@ ego_mf <- enrichGO(gene = sigOE_genes,
 
 ```
 
-Now, can you make a dotplot of the cellular component on your own.
-I'll let you inspect the helpfile yourself and make your plot.
+Now, can you make a dotplot of the cellular component on your own. I'll
+let you inspect the helpfile yourself and make your plot.
+
 ```{r easytwo}
 ego_mf <- enrichGO(gene = sigOE_genes,
                 universe = allOE_genes,
                 keyType = "ENSEMBL",
                 OrgDb = org.Mm.eg.db,
-                ont = "MF",
+                ont = "CC",
                 pAdjustMethod = "BH",
                 qvalueCutoff = 0.05,
                 readable = TRUE)
@@ -369,24 +374,24 @@ Helps us see some of the overlap of gene categories
 
 ```{r heatmap}
 edox <- setReadable(ego_down, 'org.Mm.eg.db', 'ENSEMBL')
-pdf("heatplot.pdf")
+#pdf("heatplot.pdf")
 heatplot(edox, showCategory=5, label_format=1)
-dev.off()
+#dev.off()
 ```
 
-Finally, we can also perform GSEA
+##GSEA Finally, we can also perform GSEA
 
 ```{r GSEA}
 # This time we will use all genes!
 # First remove any NAs
-sigOE_gsea <- dplyr::filter(sigOE, ensembl_gene_id != "NA")
-sigOE_gsea <- sigOE_gsea[which(duplicated(sigOE_gsea$ensembl_gene_id) == F), ]
+OE_gsea <- na.omit(merged_gene_ids)
+OE_gsea <- OE_gsea[which(duplicated(sigOE_gsea$ensembl_gene_id) == F), ]
 
 # Many people will choose to sort by either the FC or the significance. Why don't we do both?
 ## Extract the foldchanges
-metrics <- sigOE_gsea$log2FoldChange * -log10(sigOE_gsea$padj + 0.000000000001)
+metrics <- OE_gsea$log2FoldChange * -log10(OE_gsea$padj + 0.000000000001)
 ## Name the metrics change with the corresponding ensembl ID
-names(metrics) <- sigOE_gsea$ensembl_gene_id
+names(metrics) <- OE_gsea$ensembl_gene_id
 ```
 
 Next we need to order the combined relevance metrics in decreasing
@@ -409,12 +414,18 @@ gsea <-  GSEA(gene = metrics,
 View(gsea@result)
 ```
 
+Notice the NES, that is the most important score: the normalized
+enrichment score. GSEA accounts for differences in gene set size and in
+correlations between gene sets and the expression dataset. If you want
+to compare enrichment scores across gene sets, use that.\
+\
 Before continuing, it is important to note that because of the random
 shuffling involved in the p-value generation, you won't get the same
 answers each time you run it under the same conditions unless you set a
 seed.
 
 Go ahead and choose a term to investigate
+
 ```{r GSEA_visual}
 gseaplot(gsea, geneSetID = '')
 ```
@@ -426,11 +437,16 @@ The above was done with all GO terms. Try How would you use just BP
 
 ```
 
-Let's take some of this info and use online tools. 
-Go to more on the right and select "go to working directory"
-Then do the bottom
+Let's take some of this info and use online tools. Go to more on the
+right and select "go to working directory" Then do the bottom
+
 ```{r output}
 downOE <- sigOE %>%
   filter(log2FoldChange < -fc_threshold)
 write.csv(downOE, "down_OE.csv", quote=FALSE, row.names =FALSE)
 ```
+
+\
+\
+\
+\
